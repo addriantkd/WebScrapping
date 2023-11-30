@@ -1,78 +1,67 @@
 import requests
 import os
-import sys
-import datetime
 import pandas as pd
+from api_scrape import Movie
 from requests_html import HTML
+from datetime import datetime
+from config import BOXOFFICE_DIR, url, URL_FILE
 
-FILE_PATH = os.path.abspath(__file__)
-BASE_DIR = os.path.dirname(FILE_PATH)
-URL_FILE = os.path.join(BASE_DIR, 'url.html')
-CSV_DIR = os.path.join(BASE_DIR, 'BoxOffice')
-os.makedirs(CSV_DIR, exist_ok=True)
-
-url = "https://www.boxofficemojo.com/year/world"
-now = datetime.datetime.now()
-
-class Parser:
+class Scraper:
     data = []
-    year = now.year
+    year = str(datetime.now().year)
     url = ''
-    def __init__(self, year=str(now.year)):
-        if year != now.year:
+    
+    def __init__(self, year=str(datetime.now().year)):
+        if year != self.year:
             self.year = str(year)
         self.url = url + f'/{self.year}'
-        self.url_to_txt()
-        self.parsing()
-        
-    #### saving url content to html file for future parsing ####
+        if self.url_to_txt():
+            self.parsing()
+            self.store_to_csv()
+        else:
+            print("Can't connect to url")
+            
     def url_to_txt(self, filename=URL_FILE):
         r = requests.get(self.url)
-        if r.status_code == 200:
+        if r.status_code in range (200, 299):
             html_text = r.text
             with open(filename, 'w', encoding="utf-8") as file:
                 file.write(html_text)   
             return html_text
-        else:
-            raise Exception("Can't connect to url")
+        return False
 
     def parsing(self):
         html_text = self.url_to_txt()
         r_html = HTML(html=html_text)
         table_class = '.imdb-scroll-table-inner'
-        table = r_html.find(table_class)    ### finding table ###
-        
+        table = r_html.find(table_class)    
         if len(table) == 1:
             parsed_table = table[0]
-            rows = parsed_table.find('tr')  ### parsing by rows ###
+            rows = parsed_table.find('tr')  
             header_row = rows[0]
             header_cols = header_row.find('th')
-            columns_name = [x.text for x in header_cols]    ### saving first row as columns names ###
-            table_data = []
-            table_data.append(columns_name)
+            column_names = [x.text for x in header_cols]
+            for index, name in enumerate(column_names):
+                if name == "%":
+                    column_names[index] = column_names[index-1] + " " + name
+            table_data = []   
             for row in rows[1:]:
-                columns = row.find('td')    ### parsing  by columns ###
-                row_data = []
+                columns = row.find('td')    
+                row_data = {} 
+                index = 0
                 for column in columns:
-                    row_data.append(column.text)
-                table_data.append(row_data)          
-        self.data = table_data  ### saving data as class atribute ###
-    
+                    row_data[column_names[index]] = column.text
+                    index += 1
+                movie = Movie(name=row_data['Release Group'], year=self.year) 
+                row_data.update(movie.selector())
+                table_data.append(row_data)    
+            self.data = table_data     
+                      
     def store_to_csv(self):
-        df = pd.DataFrame(self.data[1:], columns=self.data[0])
-        csv_file = os.path.join(CSV_DIR, f'{self.year}.csv')
+        df = pd.DataFrame(self.data)
+        csv_file = os.path.join(BOXOFFICE_DIR, f'{self.year}.csv')  
         if os.path.isfile(csv_file):  
             print("CSV file already exists")
         else:
             df.to_csv(csv_file, index=False)
             print(f'Box Office {self.year} saved as csv file')
-
-
-if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        BoxOffice = Parser(year=sys.argv[1])
-        BoxOffice.store_to_csv()
-    else:
-        BoxOffice = Parser()
-        BoxOffice.store_to_csv()
-    
